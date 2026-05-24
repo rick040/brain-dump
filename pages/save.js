@@ -8,17 +8,6 @@ const DEFAULT_TAGS = [
   "werk", "klant", "tool", "later", "urgent",
 ];
 
-function detectType(url, text) {
-  if (!url && !text) return "tekst";
-  if (url) {
-    if (/youtube|youtu\.be|vimeo/.test(url)) return "video";
-    if (/twitter\.com|x\.com/.test(url)) return "tweet";
-    if (/instagram\.com/.test(url)) return "instagram";
-    return "link";
-  }
-  return "tekst";
-}
-
 export default function SavePage() {
   const router = useRouter();
   const nameRef = useRef(null);
@@ -32,35 +21,63 @@ export default function SavePage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [type, setType] = useState("tekst");
+  const [imageUrl, setImageUrl] = useState("");
+  const [mediaType, setMediaType] = useState("");
+  const [ogData, setOgData] = useState(null);
+  const [ogLoading, setOgLoading] = useState(false);
 
   useEffect(() => {
     if (!router.isReady) return;
-    const { title, text, url: sharedUrl } = router.query;
+    const { title, text, url: sharedUrl, imageUrl: sharedImage, mediaType: sharedMediaType } = router.query;
 
     const resolvedUrl = sharedUrl || "";
     const resolvedText = text || "";
     const resolvedTitle = title || "";
 
     setUrl(resolvedUrl);
-    setContent(resolvedText || resolvedUrl);
-    setName(resolvedTitle || resolvedText?.slice(0, 60) || resolvedUrl?.replace(/^https?:\/\//, "").slice(0, 60) || "");
-    setType(detectType(resolvedUrl, resolvedText));
+    setContent(resolvedText || "");
+    setImageUrl(sharedImage || "");
+    setMediaType(sharedMediaType || "");
 
-    setTimeout(() => nameRef.current?.select(), 100);
+    // Detect type
+    let detectedType = "tekst";
+    if (sharedImage) detectedType = sharedMediaType === "video" ? "video" : "afbeelding";
+    else if (resolvedUrl) {
+      if (/youtube|youtu\.be|vimeo/.test(resolvedUrl)) detectedType = "video";
+      else if (/instagram\.com/.test(resolvedUrl)) detectedType = "instagram";
+      else if (/twitter\.com|x\.com/.test(resolvedUrl)) detectedType = "tweet";
+      else detectedType = "link";
+    }
+    setType(detectedType);
+
+    setName(resolvedTitle || resolvedText?.slice(0, 60) || resolvedUrl?.replace(/^https?:\/\//, "").slice(0, 60) || "");
+
+    // Fetch OG preview for URLs
+    if (resolvedUrl && !sharedImage) {
+      setOgLoading(true);
+      fetch(`/api/og?url=${encodeURIComponent(resolvedUrl)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          setOgData(data);
+          if (!resolvedTitle && data.title) setName(data.title.slice(0, 80));
+          if (!resolvedText && data.description) setContent(data.description.slice(0, 300));
+          if (data.type && data.type !== "link") setType(data.type);
+        })
+        .catch(() => {})
+        .finally(() => setOgLoading(false));
+    }
+
+    setTimeout(() => nameRef.current?.select(), 150);
   }, [router.isReady, router.query]);
 
   function toggleTag(tag) {
-    setTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    );
+    setTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
   }
 
   function addCustomTag(e) {
     e.preventDefault();
     const t = customTag.trim().toLowerCase();
-    if (t && !tags.includes(t)) {
-      setTags((prev) => [...prev, t]);
-    }
+    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
     setCustomTag("");
   }
 
@@ -79,6 +96,9 @@ export default function SavePage() {
       url: url.trim() || null,
       type,
       tags,
+      image_url: imageUrl || ogData?.image || null,
+      og_image: ogData?.image || null,
+      og_description: ogData?.description || null,
     });
 
     if (dbError) {
@@ -98,6 +118,9 @@ export default function SavePage() {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSave();
   }
 
+  const hasPreview = imageUrl || ogData?.image;
+  const previewImg = imageUrl || ogData?.image;
+
   return (
     <>
       <Head>
@@ -105,86 +128,98 @@ export default function SavePage() {
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       </Head>
 
-      <div style={styles.root} onKeyDown={handleKeyDown}>
+      <div style={s.root} onKeyDown={handleKeyDown}>
         {/* Header */}
-        <div style={styles.header}>
-          <span style={styles.logo}>BRAIN DUMP</span>
-          <span style={{ ...styles.typeBadge, ...getTypeBadgeColor(type) }}>{type}</span>
+        <div style={s.header}>
+          <span style={s.logo}>BRAIN DUMP</span>
+          <span style={{ ...s.typeBadge, ...getTypeColor(type) }}>{type}</span>
         </div>
 
+        {/* Media preview */}
+        {hasPreview && (
+          <div style={s.previewWrap}>
+            <img
+              src={previewImg}
+              alt=""
+              style={s.previewImg}
+              onError={(e) => { e.target.style.display = "none"; }}
+            />
+            {(ogData?.siteName || type === "instagram" || type === "video") && (
+              <div style={s.previewBadge}>{ogData?.siteName || type}</div>
+            )}
+          </div>
+        )}
+
+        {/* OG loading */}
+        {ogLoading && (
+          <div style={s.ogLoader}>
+            <span style={s.ogLoaderDot} />
+            <span style={s.ogLoaderText}>preview laden...</span>
+          </div>
+        )}
+
+        {/* URL bar */}
+        {url && (
+          <div style={s.urlBar}>
+            <span style={s.urlDot}>&#9679;</span>
+            <span style={s.urlText}>
+              {url.replace(/^https?:\/\//, "").slice(0, 55)}{url.length > 55 ? "..." : ""}
+            </span>
+          </div>
+        )}
+
         {/* Name */}
-        <div style={styles.field}>
-          <label style={styles.label}>NAAM</label>
+        <div style={s.field}>
+          <label style={s.label}>NAAM</label>
           <input
             ref={nameRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Geef het een naam..."
-            style={styles.nameInput}
+            style={s.nameInput}
             maxLength={120}
             autoComplete="off"
           />
         </div>
 
-        {/* URL preview */}
-        {url && (
-          <div style={styles.urlPreview}>
-            <span style={styles.urlIcon}>&#9783;</span>
-            <span style={styles.urlText}>{url.replace(/^https?:\/\//, "").slice(0, 60)}{url.length > 60 ? "..." : ""}</span>
-          </div>
-        )}
-
         {/* Content */}
-        <div style={styles.field}>
-          <label style={styles.label}>INHOUD</label>
+        <div style={s.field}>
+          <label style={s.label}>NOTITIE</label>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Tekst, notitie, context..."
-            style={styles.textarea}
-            rows={3}
+            placeholder="Extra context, notitie..."
+            style={s.textarea}
+            rows={2}
           />
         </div>
 
         {/* Tags */}
-        <div style={styles.field}>
-          <label style={styles.label}>TAGS</label>
-          <div style={styles.tagGrid}>
+        <div style={s.field}>
+          <label style={s.label}>TAGS</label>
+          <div style={s.tagGrid}>
             {DEFAULT_TAGS.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => toggleTag(tag)}
-                style={{
-                  ...styles.tagChip,
-                  ...(tags.includes(tag) ? styles.tagChipActive : {}),
-                }}
-              >
+              <button key={tag} onClick={() => toggleTag(tag)} style={{ ...s.tagChip, ...(tags.includes(tag) ? s.tagChipActive : {}) }}>
                 {tag}
               </button>
             ))}
           </div>
 
-          {/* Custom tag */}
-          <form onSubmit={addCustomTag} style={styles.customTagRow}>
+          <form onSubmit={addCustomTag} style={s.customTagRow}>
             <input
               value={customTag}
               onChange={(e) => setCustomTag(e.target.value)}
               placeholder="+ eigen tag"
-              style={styles.customTagInput}
+              style={s.customTagInput}
               maxLength={30}
             />
-            <button type="submit" style={styles.customTagBtn}>+</button>
+            <button type="submit" style={s.customTagBtn}>+</button>
           </form>
 
-          {/* Active custom tags (non-default) */}
           {tags.filter((t) => !DEFAULT_TAGS.includes(t)).length > 0 && (
-            <div style={{ ...styles.tagGrid, marginTop: 8 }}>
+            <div style={{ ...s.tagGrid, marginTop: 8 }}>
               {tags.filter((t) => !DEFAULT_TAGS.includes(t)).map((tag) => (
-                <button
-                  key={tag}
-                  onClick={() => toggleTag(tag)}
-                  style={{ ...styles.tagChip, ...styles.tagChipActive }}
-                >
+                <button key={tag} onClick={() => toggleTag(tag)} style={{ ...s.tagChip, ...s.tagChipActive }}>
                   {tag} x
                 </button>
               ))}
@@ -192,38 +227,35 @@ export default function SavePage() {
           )}
         </div>
 
-        {error && <div style={styles.errorMsg}>{error}</div>}
+        {error && <div style={s.errorMsg}>{error}</div>}
 
-        {/* Save button */}
         <button
           onClick={handleSave}
           disabled={saving || saved}
-          style={{
-            ...styles.saveBtn,
-            ...(saving || saved ? styles.saveBtnDone : {}),
-          }}
+          style={{ ...s.saveBtn, ...(saving || saved ? s.saveBtnDone : {}) }}
         >
           {saved ? "OPGESLAGEN !" : saving ? "OPSLAAN..." : "OPSLAAN"}
         </button>
 
-        <div style={styles.hint}>CMD+Enter om snel op te slaan</div>
+        <div style={s.hint}>CMD+Enter om snel op te slaan</div>
       </div>
     </>
   );
 }
 
-function getTypeBadgeColor(type) {
+function getTypeColor(type) {
   const map = {
     video: { background: "#1a0a2e", color: "#b085ff" },
     link: { background: "#0a1a0a", color: "#c8ff00" },
     tweet: { background: "#0a1420", color: "#4db8ff" },
     instagram: { background: "#1f0a15", color: "#ff6eb0" },
     tekst: { background: "#1a1a0a", color: "#ffcc44" },
+    afbeelding: { background: "#0a1a18", color: "#44ffcc" },
   };
   return map[type] || map.tekst;
 }
 
-const styles = {
+const s = {
   root: {
     minHeight: "100vh",
     background: "var(--bg)",
@@ -232,7 +264,7 @@ const styles = {
     margin: "0 auto",
     display: "flex",
     flexDirection: "column",
-    gap: 20,
+    gap: 18,
   },
   header: {
     display: "flex",
@@ -246,7 +278,6 @@ const styles = {
     fontSize: 12,
     letterSpacing: "0.2em",
     color: "var(--accent)",
-    fontWeight: 400,
   },
   typeBadge: {
     fontFamily: "var(--font-mono)",
@@ -255,6 +286,77 @@ const styles = {
     padding: "3px 8px",
     borderRadius: 3,
     textTransform: "uppercase",
+  },
+  previewWrap: {
+    position: "relative",
+    borderRadius: 8,
+    overflow: "hidden",
+    border: "1px solid var(--border)",
+    maxHeight: 240,
+    background: "var(--bg3)",
+  },
+  previewImg: {
+    width: "100%",
+    height: 220,
+    objectFit: "cover",
+    display: "block",
+  },
+  previewBadge: {
+    position: "absolute",
+    bottom: 8,
+    left: 8,
+    fontFamily: "var(--font-mono)",
+    fontSize: 10,
+    letterSpacing: "0.1em",
+    color: "#fff",
+    background: "rgba(0,0,0,0.65)",
+    padding: "3px 8px",
+    borderRadius: 3,
+    backdropFilter: "blur(4px)",
+    textTransform: "uppercase",
+  },
+  ogLoader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 0",
+  },
+  ogLoaderDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: "var(--accent)",
+    opacity: 0.6,
+    display: "inline-block",
+    animation: "pulse 1s infinite",
+  },
+  ogLoaderText: {
+    fontFamily: "var(--font-mono)",
+    fontSize: 11,
+    color: "var(--muted)",
+    letterSpacing: "0.1em",
+  },
+  urlBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "var(--bg2)",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    padding: "7px 12px",
+  },
+  urlDot: {
+    fontSize: 8,
+    color: "var(--accent)",
+    flexShrink: 0,
+  },
+  urlText: {
+    fontFamily: "var(--font-mono)",
+    fontSize: 11,
+    color: "var(--muted)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   field: {
     display: "flex",
@@ -270,49 +372,25 @@ const styles = {
   nameInput: {
     background: "var(--bg2)",
     border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
-    padding: "14px 14px",
+    borderRadius: 6,
+    padding: "13px 14px",
     fontSize: 18,
     fontFamily: "var(--font-ui)",
     fontWeight: 700,
     color: "var(--text)",
     width: "100%",
-    transition: "border-color 0.15s",
   },
   textarea: {
     background: "var(--bg2)",
     border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
-    padding: "12px 14px",
-    fontSize: 14,
+    borderRadius: 6,
+    padding: "11px 14px",
+    fontSize: 13,
     fontFamily: "var(--font-mono)",
     color: "var(--muted)",
     width: "100%",
     resize: "vertical",
     lineHeight: 1.6,
-    transition: "border-color 0.15s",
-  },
-  urlPreview: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    background: "var(--accent-dim2)",
-    border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
-    padding: "8px 12px",
-  },
-  urlIcon: {
-    fontSize: 14,
-    color: "var(--accent)",
-    flexShrink: 0,
-  },
-  urlText: {
-    fontFamily: "var(--font-mono)",
-    fontSize: 11,
-    color: "var(--muted)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
   },
   tagGrid: {
     display: "flex",
@@ -327,8 +405,8 @@ const styles = {
     fontSize: 12,
     fontFamily: "var(--font-mono)",
     color: "var(--muted)",
-    transition: "all 0.1s",
     letterSpacing: "0.05em",
+    cursor: "pointer",
   },
   tagChipActive: {
     background: "var(--accent-dim)",
@@ -344,17 +422,16 @@ const styles = {
     flex: 1,
     background: "var(--bg3)",
     border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
+    borderRadius: 6,
     padding: "8px 12px",
     fontSize: 12,
     fontFamily: "var(--font-mono)",
     color: "var(--text)",
-    letterSpacing: "0.05em",
   },
   customTagBtn: {
     background: "var(--bg3)",
     border: "1px solid var(--border)",
-    borderRadius: "var(--radius)",
+    borderRadius: 6,
     width: 38,
     fontSize: 18,
     color: "var(--muted)",
@@ -362,6 +439,7 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    cursor: "pointer",
   },
   errorMsg: {
     fontFamily: "var(--font-mono)",
@@ -369,7 +447,7 @@ const styles = {
     color: "var(--danger)",
     padding: "8px 12px",
     background: "rgba(255,68,68,0.08)",
-    borderRadius: "var(--radius)",
+    borderRadius: 6,
     border: "1px solid rgba(255,68,68,0.2)",
   },
   saveBtn: {
@@ -380,10 +458,10 @@ const styles = {
     fontSize: 14,
     letterSpacing: "0.15em",
     padding: "16px",
-    borderRadius: "var(--radius)",
+    borderRadius: 6,
     width: "100%",
-    transition: "opacity 0.15s, transform 0.1s",
     marginTop: 4,
+    cursor: "pointer",
   },
   saveBtnDone: {
     opacity: 0.5,
