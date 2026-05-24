@@ -10,72 +10,73 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Read raw body as string
 function readBody(req) {
   return new Promise((resolve) => {
-    let body = "";
-    req.on("data", (chunk) => { body += chunk.toString(); });
-    req.on("end", () => resolve(body));
-    req.on("error", () => resolve(""));
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", () => resolve(Buffer.alloc(0)));
   });
 }
 
-// Parse multipart/form-data manually for text fields only (no file)
-function parseMultipart(body, boundary) {
+// Properly parse multipart - split headers from body at \r\n\r\n
+function parseMultipartTextFields(rawBuffer, boundary) {
   const fields = {};
+  const body = rawBuffer.toString("binary");
   const parts = body.split(`--${boundary}`);
+
   for (const part of parts) {
-    const match = part.match(/Content-Disposition: form-data; name="([^"]+)"[\r\n]+([^]+)/i);
-    if (match) {
-      fields[match[1]] = match[2].replace(/\r?\n$/, "").trim();
-    }
+    // Headers and body are separated by \r\n\r\n
+    const splitIdx = part.indexOf("\r\n\r\n");
+    if (splitIdx === -1) continue;
+
+    const headers = part.substring(0, splitIdx);
+    const value = part.substring(splitIdx + 4).replace(/\r\n$/, "").trim();
+
+    // Only process form fields (no filename = no file upload)
+    if (headers.includes("filename=")) continue;
+
+    const nameMatch = headers.match(/name="([^"]+)"/i);
+    if (!nameMatch) continue;
+
+    fields[nameMatch[1]] = value;
   }
   return fields;
 }
 
-// Extract first URL from a string
 function extractUrl(str) {
   if (!str) return "";
   const match = str.match(/https?:\/\/[^\s"'<>]+/);
-  return match ? match[0].replace(/[.,;:!?]+$/, "") : "";
+  return match ? match[0].replace(/[.,;:!?)]+$/, "") : "";
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
   const contentType = req.headers["content-type"] || "";
-  const rawBody = await readBody(req);
+  const rawBuffer = await readBody(req);
+  const rawBody = rawBuffer.toString("utf8");
 
   let fields = {};
   let hasFile = false;
 
-  // Detect if request contains a file (binary data)
   if (contentType.includes("multipart/form-data")) {
     const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
     const boundary = boundaryMatch?.[1];
 
     if (boundary) {
-      // Check if there's binary/file content
       hasFile = rawBody.includes('filename="') || rawBody.includes("Content-Type: image") || rawBody.includes("Content-Type: video");
 
       if (hasFile) {
-        // Use formidable for file uploads
         try {
           const formidable = (await import("formidable")).default;
-          const { IncomingMessage } = await import("http");
-
-          // Reconstruct a fresh request for formidable from raw body
           const form = formidable({ maxFileSize: 15 * 1024 * 1024, keepExtensions: true });
           const [fFields, fFiles] = await new Promise((resolve, reject) => {
             form.parse(req, (err, f, fi) => err ? reject(err) : resolve([f, fi]));
           });
 
-          const getF = (v) => Array.isArray(v) ? v[0] : v || "";
-          fields = {
-            title: getF(fFields.title),
-            text: getF(fFields.text),
-            url: getF(fFields.url),
-          };
+          const g = (v) => Array.isArray(v) ? v[0] : v || "";
+          fields = { title: g(fFields.title), text: g(fFields.text), url: g(fFields.url) };
 
           const mediaFile = Array.isArray(fFiles.media) ? fFiles.media[0] : fFiles.media;
           if (mediaFile?.filepath) {
@@ -101,11 +102,11 @@ export default async function handler(req, res) {
             }
           }
         } catch (err) {
-          console.error("Formidable error:", err.message);
+          console.error("File upload error:", err.message);
         }
       } else {
-        // No file - parse text fields from multipart manually
-        fields = parseMultipart(rawBody, boundary);
+        // Text-only share: parse properly
+        fields = parseMultipartTextFields(rawBuffer, boundary);
       }
     }
   } else if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -115,16 +116,19 @@ export default async function handler(req, res) {
 
   let { title = "", text = "", url = "" } = fields;
 
-  // Many apps (Instagram, Chrome) put the URL inside the text field
+  // Strip any Content-Type or header bleed from field values
+  title = title.replace(/^Content-Type:\s*\S+\s*/i, "").trim();
+  text = text.replace(/^Content-Type:\s*\S+\s*/i, "").trim();
+
+  // Extract URL from text if url field is empty
   if (!url) {
-    const urlInText = extractUrl(text);
-    if (urlInText) {
-      url = urlInText;
-      text = text.replace(urlInText, "").replace(/\s{2,}/g, " ").trim();
+    const found = extractUrl(text);
+    if (found) {
+      url = found;
+      text = text.replace(found, "").replace(/\s{2,}/g, " ").trim();
     }
   }
 
-  // Some apps put URL as title
   if (!url && title.startsWith("http")) {
     url = title;
     title = "";
