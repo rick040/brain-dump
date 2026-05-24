@@ -48,8 +48,11 @@ export default function SavePage() {
     if (!router.isReady) return;
     const { title, text, url: sharedUrl, imageUrl: sharedImage, mediaType } = router.query;
 
-    const resolvedUrl = sharedUrl || "";
-    const resolvedText = text || "";
+    // Also check text param for URLs (Instagram puts URL in text field)
+    const rawText = text || "";
+    const urlInText = rawText.match(/https?:\/\/[^\s"'<>]+/)?.[0]?.replace(/[.,;:!?]+$/, "") || "";
+    const resolvedUrl = sharedUrl || urlInText || "";
+    const resolvedText = urlInText ? rawText.replace(urlInText, "").trim() : rawText;
     const resolvedTitle = title || "";
     const resolvedImage = sharedImage || "";
 
@@ -112,7 +115,10 @@ export default function SavePage() {
     setSaving(true);
     setError("");
 
+    const { data: { user } } = await supabase.auth.getUser();
+
     const { error: dbError } = await supabase.from("brain_dump").insert({
+      user_id: user?.id,
       name: name.trim(),
       content: note.trim() || null,
       url: url.trim() || null,
