@@ -3,6 +3,20 @@ import Head from "next/head";
 import Link from "next/link";
 import { supabase } from "../lib/supabase";
 
+function decodeEntities(str) {
+  if (!str) return "";
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#x[0-9a-fA-F]+;/g, "")
+    .replace(/&#\d+;/g, "")
+    .replace(/&[a-z]+;/g, "");
+}
+
 const TYPE_COLORS = {
   video: "#b085ff",
   link: "#c8ff00",
@@ -45,6 +59,10 @@ export default function Dashboard() {
     }
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+  }
+
   function formatDate(iso) {
     const d = new Date(iso);
     return d.toLocaleDateString("nl-NL", { day: "2-digit", month: "short" });
@@ -65,24 +83,20 @@ export default function Dashboard() {
             <span style={s.logo}>BRAIN DUMP</span>
             <span style={s.count}>{items.length} items</span>
           </div>
-          <Link href="/save" style={s.addBtn}>+ NIEUW</Link>
+          <div style={s.topRight}>
+            <Link href="/save" style={s.addBtn}>+ NIEUW</Link>
+            <button onClick={handleLogout} style={s.logoutBtn}>UIT</button>
+          </div>
         </div>
 
         <div style={s.searchWrap}>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Zoek naam, inhoud, url..."
-            style={s.searchInput}
-          />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Zoek naam, inhoud, url..." style={s.searchInput} />
           {search && <button onClick={() => setSearch("")} style={s.clearBtn}>x</button>}
         </div>
 
         {allTags.length > 0 && (
           <div style={s.tagRow}>
-            <button onClick={() => setActiveTag(null)} style={{ ...s.tagFilter, ...(activeTag === null ? s.tagFilterActive : {}) }}>
-              alles
-            </button>
+            <button onClick={() => setActiveTag(null)} style={{ ...s.tagFilter, ...(activeTag === null ? s.tagFilterActive : {}) }}>alles</button>
             {allTags.map((tag) => (
               <button key={tag} onClick={() => setActiveTag(activeTag === tag ? null : tag)} style={{ ...s.tagFilter, ...(activeTag === tag ? s.tagFilterActive : {}) }}>
                 {tag}
@@ -106,15 +120,9 @@ export default function Dashboard() {
               const expanded = expandedId === item.id;
               return (
                 <div key={item.id} style={s.card}>
-                  {/* Image preview */}
                   {img && (
                     <div style={s.cardImgWrap} onClick={() => setExpandedId(expanded ? null : item.id)}>
-                      <img
-                        src={img}
-                        alt=""
-                        style={{ ...s.cardImg, ...(expanded ? s.cardImgExpanded : {}) }}
-                        onError={(e) => { e.target.parentElement.style.display = "none"; }}
-                      />
+                      <img src={img} alt="" style={{ ...s.cardImg, ...(expanded ? s.cardImgExpanded : {}) }} onError={(e) => { e.target.parentElement.style.display = "none"; }} />
                       {!expanded && <div style={s.cardImgOverlay}>TAP OM GROTER TE ZIEN</div>}
                     </div>
                   )}
@@ -130,16 +138,15 @@ export default function Dashboard() {
 
                     <div style={s.cardName}>
                       {item.url ? (
-                        <a href={item.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{item.name}</a>
+                        <a href={item.url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>{decodeEntities(item.name)}</a>
                       ) : item.name}
                     </div>
 
-                    {item.og_description && (
-                      <div style={s.cardDesc}>{item.og_description.slice(0, 120)}{item.og_description.length > 120 ? "..." : ""}</div>
-                    )}
-
-                    {item.content && item.content !== item.url && !item.og_description && (
-                      <div style={s.cardDesc}>{item.content.slice(0, 120)}{item.content.length > 120 ? "..." : ""}</div>
+                    {(item.og_description || item.content) && (
+                      <div style={s.cardDesc}>
+                        {decodeEntities(item.og_description || item.content || "").slice(0, 120)}
+                        {decodeEntities(item.og_description || item.content || "").length > 120 ? "..." : ""}
+                      </div>
                     )}
 
                     {item.url && (
@@ -149,9 +156,7 @@ export default function Dashboard() {
                     {item.tags?.length > 0 && (
                       <div style={s.cardTags}>
                         {item.tags.map((tag) => (
-                          <span key={tag} onClick={() => setActiveTag(tag)} style={{ ...s.cardTag, ...(activeTag === tag ? s.cardTagActive : {}) }}>
-                            {tag}
-                          </span>
+                          <span key={tag} onClick={() => setActiveTag(tag)} style={{ ...s.cardTag, ...(activeTag === tag ? s.cardTagActive : {}) }}>{tag}</span>
                         ))}
                       </div>
                     )}
@@ -180,7 +185,9 @@ const s = {
   logoRow: { display: "flex", alignItems: "baseline", gap: 12 },
   logo: { fontFamily: "var(--font-mono)", fontSize: 13, letterSpacing: "0.2em", color: "var(--accent)" },
   count: { fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" },
+  topRight: { display: "flex", alignItems: "center", gap: 8 },
   addBtn: { fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.12em", color: "#000", background: "var(--accent)", padding: "7px 14px", borderRadius: 4, fontWeight: 600, display: "inline-block" },
+  logoutBtn: { fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.1em", color: "var(--muted)", background: "var(--bg3)", border: "1px solid var(--border)", padding: "7px 12px", borderRadius: 4, cursor: "pointer" },
   searchWrap: { position: "relative", marginBottom: 14 },
   searchInput: { width: "100%", background: "var(--bg2)", border: "1px solid var(--border)", borderRadius: 6, padding: "11px 40px 11px 14px", fontSize: 14, fontFamily: "var(--font-ui)", color: "var(--text)" },
   clearBtn: { position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontFamily: "var(--font-mono)", fontSize: 14, color: "var(--muted)", background: "none", border: "none", cursor: "pointer", padding: 4 },
