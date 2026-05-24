@@ -1,4 +1,3 @@
-import formidable from "formidable";
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "fs";
 
@@ -6,58 +5,75 @@ export const config = {
   api: { bodyParser: false },
 };
 
-// Use service key for storage uploads
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+function parseForm(req) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Dynamic import avoids SSR issues with formidable
+      const formidable = (await import("formidable")).default;
+      const form = formidable({ maxFileSize: 15 * 1024 * 1024, keepExtensions: true });
+      form.parse(req, (err, fields, files) => {
+        if (err) reject(err);
+        else resolve({ fields, files });
+      });
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function field(val) {
+  return Array.isArray(val) ? val[0] : val || "";
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const form = formidable({ maxFileSize: 15 * 1024 * 1024, keepExtensions: true });
-
   let fields, files;
   try {
-    [fields, files] = await form.parse(req);
+    ({ fields, files } = await parseForm(req));
   } catch (err) {
-    console.error("Form parse error:", err);
-    return res.status(400).json({ error: "Form parse failed" });
+    console.error("Form parse error:", err.message);
+    // Fallback redirect even on parse failure
+    return res.redirect(302, "/save");
   }
 
-  const title = Array.isArray(fields.title) ? fields.title[0] : fields.title || "";
-  const text = Array.isArray(fields.text) ? fields.text[0] : fields.text || "";
-  const url = Array.isArray(fields.url) ? fields.url[0] : fields.url || "";
-  const mediaFile = files.media?.[0] || files.media;
+  const title = field(fields.title);
+  const text = field(fields.text);
+  const url = field(fields.url);
+  const mediaFile = Array.isArray(files.media) ? files.media[0] : files.media;
 
   const params = new URLSearchParams();
   if (title) params.set("title", title);
   if (text) params.set("text", text);
   if (url) params.set("url", url);
 
-  // Handle image/video upload
-  if (mediaFile) {
+  if (mediaFile?.filepath) {
     try {
       const fileBuffer = readFileSync(mediaFile.filepath);
-      const ext = mediaFile.originalFilename?.split(".").pop() || "jpg";
+      const mimeType = mediaFile.mimetype || "image/jpeg";
+      const ext = mediaFile.originalFilename?.split(".").pop()?.toLowerCase() || "jpg";
       const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
 
       const { data, error } = await supabase.storage
         .from("media")
-        .upload(fileName, fileBuffer, {
-          contentType: mediaFile.mimetype || "image/jpeg",
-          upsert: false,
-        });
+        .upload(fileName, fileBuffer, { contentType: mimeType, upsert: false });
 
       if (!error && data) {
         const { data: urlData } = supabase.storage.from("media").getPublicUrl(fileName);
         if (urlData?.publicUrl) {
           params.set("imageUrl", urlData.publicUrl);
-          params.set("mediaType", mediaFile.mimetype?.startsWith("video") ? "video" : "image");
+          params.set("mediaType", mimeType.startsWith("video") ? "video" : "afbeelding");
         }
+      } else if (error) {
+        console.error("Storage error:", error.message);
       }
     } catch (err) {
-      console.error("Upload error:", err);
+      console.error("File read/upload error:", err.message);
     }
   }
 
