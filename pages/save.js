@@ -10,6 +10,7 @@ function detectType(url) {
   if (/youtube\.com|youtu\.be|vimeo\.com/.test(url)) return "video";
   if (/instagram\.com/.test(url)) return "instagram";
   if (/twitter\.com|x\.com/.test(url)) return "tweet";
+  if (/pinterest\.com|pin\.it/.test(url)) return "pinterest";
   return "link";
 }
 function decode(str) {
@@ -213,7 +214,7 @@ export default function SavePage() {
     setTimeout(() => { if (window.history.length > 1) window.close(); else router.push("/"); }, 700);
   }
 
-  const tc = { video:"#B085FF", instagram:"#FF6EB0", tweet:"#4DB8FF", link:"#CCFF00", tekst:"#FFD166", afbeelding:"#44FFCC", url:"#CCFF00" }[type] || "#CCFF00";
+  const tc = { video:"#B085FF", instagram:"#FF6EB0", tweet:"#4DB8FF", link:"#CCFF00", tekst:"#FFD166", afbeelding:"#44FFCC", url:"#CCFF00", pinterest:"#E60023" }[type] || "#CCFF00";
 
   // Manual entry type chooser
   if (!isShared && entryType === null) {
