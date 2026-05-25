@@ -8,6 +8,7 @@ const TYPE_C = {
   tweet:      { bg:"#0A1420", c:"#4DB8FF" }, link:      { bg:"#0D1A0D", c:"#CCFF00" },
   tekst:      { bg:"#1A1A0A", c:"#FFD166" }, afbeelding:{ bg:"#0A1A18", c:"#44FFCC" },
   notitie:    { bg:"#1A100A", c:"#FF9F43" }, url:       { bg:"#0D1A0D", c:"#CCFF00" },
+  pinterest:  { bg:"#2E0008", c:"#FF6B81" },
 };
 
 function decode(str) {
